@@ -96,7 +96,7 @@ def tokenize_bert_pair(pair, max_length=512):
     max_tokens = max_length - 3  # Account for [CLS], [SEP], [SEP]
     if len(tokens_a) + len(tokens_b) > max_tokens:
         total_len = len(tokens_a) + len(tokens_b)
-        tokens_a = tokens_a[:len(tokens_a) * max_tokens // total_len]
+        tokens_a = tokens_a[:len(tokens_a) * max_tokens // total_len] # Both sentences shrink by the same percentage, maintaining their relative importance
         tokens_b = tokens_b[:len(tokens_b) * max_tokens // total_len]
     
     # Build BERT input: [CLS] + sentence_a + [SEP] + sentence_b + [SEP]
@@ -108,7 +108,7 @@ def tokenize_bert_pair(pair, max_length=512):
     # Pad to max_length
     while len(tokens) < max_length:
         tokens.append(PAD_TOKEN)
-        segment_ids.append(0)
+        segment_ids.append(0) # segment id for PAD can be 0
     
     # Truncate if somehow longer
     tokens = tokens[:max_length]
@@ -167,7 +167,7 @@ if __name__ == '__main__':
     nprocs = max(1, os.cpu_count() - 2) # leave some spare CPU
     with mp.Pool(nprocs) as pool:
         shard_index = 0
-        examples_per_shard = 10000  # Number of BERT examples per shard
+        examples_per_shard = 400000  # Number of BERT examples per shard
         
         # Buffers for current shard
         current_input_ids = []
