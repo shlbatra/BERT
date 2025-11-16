@@ -2,7 +2,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+from dataclasses import dataclass
 
+
+@dataclass
+class BertConfig:
+    vocab_size: int = 50261  # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token + 1 PAD token + 1 CLS token + 1 SEP token + 1 MASK token
+    hidden_size: int = 768 # embedding dimension (model capacity)
+    num_hidden_layers: int = 12 # number of layers
+    num_attention_heads: int = 12 # number of heads
+    max_position_embeddings: int = 512 # max sequence length
 
 class BertEmbeddings(nn.Module):
     def __init__(self, vocab_size, hidden_size, max_position_embeddings=512, type_vocab_size=3):
@@ -47,7 +56,7 @@ def scaled_dot_product_attention(Q, K, V, attn_mask=None):
     
     # Apply attention masking to ignore irrelevant positions
     if attn_mask is not None:  # Technical: check if mask provided; Conceptual: allows selective attention (ignore padding, future tokens, etc.)
-        scores.masked_fill_(attn_mask, -1e9)  # Technical: fills masked positions with large negative value; Conceptual: makes softmax output ~0 for these positions
+        scores = scores + attn_mask  # Technical: adds pre-computed additive mask; Conceptual: large negative values make softmax output ~0 for masked positions
     
     # Convert raw scores to probability distribution
     attn_weights = F.softmax(scores, dim=-1)  # Technical: applies softmax along last dimension; Conceptual: creates probability distribution (weights sum to 1)
@@ -87,9 +96,7 @@ class BertMultiHeadAttention(nn.Module):
         K = K.view(batch_size, seq_length, self.num_attention_heads, self.attention_head_size).transpose(1, 2)  # Allows parallel attention computation
         V = V.view(batch_size, seq_length, self.num_attention_heads, self.attention_head_size).transpose(1, 2)  # Each head learns different aspects
         
-        # Expand mask dimensions to match multi-head structure
-        if attention_mask is not None:
-            attention_mask = attention_mask.unsqueeze(1).unsqueeze(1)  # (B,S) → (B,1,1,S) for broadcasting to all heads
+        # Attention mask is already in correct format from Bert.forward() - no additional processing needed
         
         # Apply scaled dot-product attention across all heads in parallel
         context, attn_weights = scaled_dot_product_attention(Q, K, V, attention_mask)  # Core attention computation
@@ -149,31 +156,34 @@ class BertEncoderLayer(nn.Module):
 
 
 class Bert(nn.Module):
-    def __init__(self, vocab_size, hidden_size, num_hidden_layers, num_attention_heads, max_position_embeddings=512):
+    def __init__(self, config):
         super().__init__()
+        # Store config for easy access
+        self.config = config
+        
         # Input embedding layer - converts tokens to rich representations
-        self.embeddings = BertEmbeddings(vocab_size, hidden_size, max_position_embeddings)  # Technical: embedding with proper parameters; Conceptual: converts discrete tokens to continuous vectors
+        self.embeddings = BertEmbeddings(config.vocab_size, config.hidden_size, config.max_position_embeddings)  # Technical: embedding with proper parameters; Conceptual: converts discrete tokens to continuous vectors
         
         # Stack of transformer encoder layers - core processing units
         self.encoder_layers = nn.ModuleList([
-            BertEncoderLayer(hidden_size, num_attention_heads) 
-            for _ in range(num_hidden_layers)
+            BertEncoderLayer(config.hidden_size, config.num_attention_heads) 
+            for _ in range(config.num_hidden_layers)
         ])  # Technical: creates list of encoder layers; Conceptual: stacks multiple attention+FFN layers for deep representation learning
         
         # NSP (Next Sentence Prediction) components
-        self.pooler = nn.Linear(hidden_size, hidden_size)  # Technical: linear projection of [CLS] token; Conceptual: creates sequence-level representation for NSP
+        self.pooler = nn.Linear(config.hidden_size, config.hidden_size)  # Technical: linear projection of [CLS] token; Conceptual: creates sequence-level representation for NSP
         self.pooler_activation = nn.Tanh()  # Technical: tanh activation function; Conceptual: bounds pooled representation
-        self.nsp_classifier = nn.Linear(hidden_size, 2)  # Technical: binary classification layer; Conceptual: predicts if sentence B follows A
+        self.nsp_classifier = nn.Linear(config.hidden_size, 2)  # Technical: binary classification layer; Conceptual: predicts if sentence B follows A
         
         # MLM (Masked Language Modeling) components  
-        self.mlm_transform = nn.Linear(hidden_size, hidden_size)  # Technical: linear transformation; Conceptual: projects hidden states for token prediction
-        self.mlm_norm = nn.LayerNorm(hidden_size)  # Technical: layer normalization; Conceptual: stabilizes MLM predictions
+        self.mlm_transform = nn.Linear(config.hidden_size, config.hidden_size)  # Technical: linear transformation; Conceptual: projects hidden states for token prediction
+        self.mlm_norm = nn.LayerNorm(config.hidden_size)  # Technical: layer normalization; Conceptual: stabilizes MLM predictions
         self.mlm_activation = F.gelu  # Technical: GELU activation; Conceptual: non-linearity for MLM head
         
         # MLM decoder with weight sharing
-        self.mlm_decoder = nn.Linear(hidden_size, vocab_size, bias=False)  # Technical: vocab prediction layer; Conceptual: predicts masked tokens
+        self.mlm_decoder = nn.Linear(config.hidden_size, config.vocab_size, bias=False)  # Technical: vocab prediction layer; Conceptual: predicts masked tokens
         self.mlm_decoder.weight = self.embeddings.token_embeddings.weight  # Technical: tie weights; Conceptual: shared embedding/output reduces parameters
-        self.mlm_bias = nn.Parameter(torch.zeros(vocab_size))  # Technical: learnable bias; Conceptual: improves MLM prediction accuracy
+        self.mlm_bias = nn.Parameter(torch.zeros(config.vocab_size))  # Technical: learnable bias; Conceptual: improves MLM prediction accuracy
         
     def forward(self, input_ids, token_type_ids, attention_mask=None):
         # Convert input tokens to embeddings
@@ -185,7 +195,7 @@ class Bert(nn.Module):
         
         # Convert mask to attention format
         extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)  # Technical: expand dims for broadcasting; Conceptual: shape for multi-head attention
-        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0  # Technical: convert to additive mask; Conceptual: large negative values → ~0 attention weights
+        extended_attention_mask = (~extended_attention_mask) * -10000.0  # Technical: convert to additive mask; Conceptual: large negative values → ~0 attention weights
         
         # Pass through all encoder layers sequentially
         for encoder_layer in self.encoder_layers:  # Technical: sequential layer application; Conceptual: progressive refinement of representations

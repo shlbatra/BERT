@@ -9,169 +9,131 @@ import time
 import math
 import random
 import numpy as np
+import sys
+import logging
 
-from bert import Bert
-from bert_inputs import create_mlm_inputs_and_labels
+from training.bert import Bert
+from training.bert import BertConfig
 from data_scripts.dataload import DataLoaderLite
+from training.distributed import DDPConfig
+from training.config import TrainingConfig
+from training.checkpointing import CheckpointConfig
+from training.trainer import Trainer
+from training.evaluator import Evaluator
 
 
-def get_lr(step, warmup_steps=10000, max_lr=6e-4, max_steps=100000):
-    """Learning rate schedule with warmup and cosine decay"""
-    if step < warmup_steps:
-        return max_lr * step / warmup_steps
-    if step > max_steps:
-        return 0.0
-    decay_ratio = (step - warmup_steps) / (max_steps - warmup_steps)
-    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
-    return max_lr * coeff
+if __name__ == "__main__":
+    """Train BERT model with MLM and NSP objectives using DDP"""
 
+    # Simple launch:
+    # python train_bert.py
+    # DDP launch for e.g. 8 GPUs:
+    # torchrun --standalone --nproc_per_node=8 train_bert.py
 
-# Simple launch:
-# python train_bert.py
-# DDP launch for e.g. 8 GPUs:
-# torchrun --standalone --nproc_per_node=8 train_bert.py
+    # Set up DDP (distributed data parallel).
+    # torchrun command sets the env variables RANK, LOCAL_RANK, and WORLD_SIZE
 
-# Set up DDP (distributed data parallel).
-# torchrun command sets the env variables RANK, LOCAL_RANK, and WORLD_SIZE
-ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
-if ddp:
-    # use of DDP atm demands CUDA, we set the device appropriately according to rank
-    assert torch.cuda.is_available(), "for now i think we need CUDA for DDP"
-    init_process_group(backend='nccl')
-    ddp_rank = int(os.environ['RANK'])
-    ddp_local_rank = int(os.environ['LOCAL_RANK'])
-    ddp_world_size = int(os.environ['WORLD_SIZE'])
-    device = f'cuda:{ddp_local_rank}'
-    torch.cuda.set_device(device)
-    master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
-else:
-    # vanilla, non-DDP run
-    ddp_rank = 0
-    ddp_local_rank = 0
-    ddp_world_size = 1
-    master_process = True
-    # attempt to autodetect device
-    device = "cpu"
+    logger = logging.getLogger(__name__)
+     # Setup logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler('training.log')
+        ],
+        force=True
+    )
+
+    # Set random seeds for reproducibility
+    torch.manual_seed(1337)
     if torch.cuda.is_available():
-        device = "cuda"
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        device = "mps"
-    print(f"using device: {device}")
+        torch.cuda.manual_seed(1337)
+    random.seed(1337)
+    np.random.seed(1337)
 
-# Set random seeds for reproducibility
-torch.manual_seed(1337)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed(1337)
-random.seed(1337)
-np.random.seed(1337)
+    # Capture the seeds for checkpointing
+    random_seeds = {
+        'torch_seed': 1337,
+        'cuda_seed': 1337 if torch.cuda.is_available() else None,
+        'random_seed': 1337,
+        'numpy_seed': 1337
+    }
 
-# Model and training hyperparameters
-batch_size = 8
-max_seq_len = 512
-vocab_size = 50260
+    # Configurations and setup
+    DDPConfig = DDPConfig() # instantiate the config
+    distributed_config = DDPConfig.setup_distributed()
+    ddp = distributed_config['ddp']
+    ddp_rank = distributed_config['ddp_rank']
+    ddp_local_rank = distributed_config['ddp_local_rank']
+    ddp_world_size = distributed_config['ddp_world_size']
+    device = distributed_config['device']
+    device_type = distributed_config['device_type']
+    logger.info(f"ddp: {ddp}, ddp_rank: {ddp_rank}, ddp_local_rank: {ddp_local_rank}, ddp_world_size: {ddp_world_size}, device: {device}, device_type: {device_type}")
 
-# BERT config (BERT-Base)
-model_config = {
-    'vocab_size': vocab_size,
-    'hidden_size': 768,
-    'num_hidden_layers': 12,
-    'num_attention_heads': 12, 
-    'max_position_embeddings': max_seq_len  # 'intermediate_size': 3072,
-}
+    TrainingConfig = TrainingConfig() # instantiate the config
+    max_steps = TrainingConfig.max_steps
+    get_lr = TrainingConfig.get_lr
+    total_batch_size = TrainingConfig.total_batch_size
+    B = TrainingConfig.B # batch size
+    T = TrainingConfig.T # sequence length
+    weight_decay = TrainingConfig.weight_decay
+    starting_learning_rate = TrainingConfig.starting_learning_rate
+    grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
 
-# Create model
-model = Bert(**model_config)
-model.to(device)
 
-# Wrap model in DDP
-if ddp:
-    model = DDP(model, device_ids=[ddp_local_rank])
-raw_model = model.module if ddp else model
+    # Vocab Size
+    VOCAB_SIZE = 50304 # Power of 2 optimization
 
-# Initialize data loaders
-train_loader = DataLoaderLite(B=batch_size, T=max_seq_len, process_rank=ddp_rank, 
-                             num_processes=ddp_world_size, split="train", master_process=master_process)
-val_loader = DataLoaderLite(B=batch_size, T=max_seq_len, process_rank=ddp_rank,
-                           num_processes=ddp_world_size, split="val", master_process=master_process)
+    # Create model
+    model = Bert(BertConfig(vocab_size=VOCAB_SIZE)) 
+    model.to(device)
 
-# Optimizer
-optimizer = torch.optim.AdamW(model.parameters(), lr=6e-4, betas=(0.9, 0.999), weight_decay=0.01)
+    # Wrap model in DDP
+    if ddp:
+        model = DDP(model, device_ids=[ddp_local_rank])
+    raw_model = model.module if ddp else model
 
-# Training loop
-max_steps = 100000
-eval_interval = 500
-log_interval = 10
+    # Initialize data loaders
+    train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train")
+    val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val")
 
-for step in range(max_steps):
-    t0 = time.time()
-    
-    # Set learning rate
-    lr = get_lr(step)
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
-    
-    # Get batch
-    input_ids, segment_ids, nsp_labels = train_loader.next_batch()
-    input_ids, segment_ids, nsp_labels = input_ids.to(device), segment_ids.to(device), nsp_labels.to(device)
-    
-    # Create MLM inputs and labels
-    masked_input_ids, mlm_labels = create_mlm_inputs_and_labels(input_ids)
-    masked_input_ids, mlm_labels = masked_input_ids.to(device), mlm_labels.to(device)
-    
-    # Forward pass
-    with torch.autocast(device_type=device, dtype=torch.bfloat16):
-        mlm_scores, nsp_scores = model(masked_input_ids, segment_ids)
+    # Optimizer
+    optimizer = torch.optim.AdamW(model.parameters(), lr=6e-4, betas=(0.9, 0.999), weight_decay=0.01)
+
+    # create the log directory we will write checkpoints to and log to
+
+    CheckpointConfig = CheckpointConfig() # instantiate the config
+    log_file = CheckpointConfig.log_file
+
+    # model trainer and evaluator
+    model_trainer = Trainer(raw_model, optimizer, train_loader, TrainingConfig, distributed_config, log_file, VOCAB_SIZE)
+    model_evaluator = Evaluator(raw_model, optimizer, TrainingConfig, distributed_config, log_file, VOCAB_SIZE)
+
+    # Training loop
+    max_steps = 100000
+    eval_interval = 500
+    log_interval = 10
+
+    for step in range(max_steps):
+        t0 = time.time()
+        last_step = (step == max_steps - 1)
+
+        # Training step
+        model_trainer.train_step(step, t0)
         
-        # MLM loss (only on masked tokens)
-        mlm_loss = F.cross_entropy(mlm_scores.view(-1, vocab_size), mlm_labels.view(-1), ignore_index=-100)
-        
-        # NSP loss
-        nsp_loss = F.cross_entropy(nsp_scores, nsp_labels)
-        
-        # Total loss
-        total_loss = mlm_loss + nsp_loss
-    
-    # Backward pass
-    optimizer.zero_grad()
-    total_loss.backward()
-    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-    optimizer.step()
-    
-    if device == "cuda":
-        torch.cuda.synchronize()
-    t1 = time.time()
-    dt = t1 - t0
-    tokens_processed = batch_size * max_seq_len * ddp_world_size
-    tokens_per_sec = tokens_processed / dt
-    
-    if master_process and step % log_interval == 0:
-        print(f"step {step:5d} | loss: {total_loss.item():.6f} | mlm: {mlm_loss.item():.6f} | nsp: {nsp_loss.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
-    
-    # Evaluation
-    if step > 0 and step % eval_interval == 0:
-        model.eval()
-        val_loader.reset()
-        with torch.no_grad():
-            val_loss_accum = 0.0
-            val_loss_steps = 20
-            for _ in range(val_loss_steps):
-                input_ids, segment_ids, nsp_labels = val_loader.next_batch()
-                input_ids, segment_ids, nsp_labels = input_ids.to(device), segment_ids.to(device), nsp_labels.to(device)
-                
-                masked_input_ids, mlm_labels = create_mlm_inputs_and_labels(input_ids)
-                masked_input_ids, mlm_labels = masked_input_ids.to(device), mlm_labels.to(device)
-                
-                with torch.autocast(device_type=device, dtype=torch.bfloat16):
-                    mlm_scores, nsp_scores = model(masked_input_ids, segment_ids)
-                    mlm_loss = F.cross_entropy(mlm_scores.view(-1, vocab_size), mlm_labels.view(-1), ignore_index=-100)
-                    nsp_loss = F.cross_entropy(nsp_scores, nsp_labels)
-                    loss = mlm_loss + nsp_loss
-                    val_loss_accum += loss.detach()
-            if ddp:
-                dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
-            if master_process:
-                print(f"validation loss: {val_loss_accum.item()/val_loss_steps:.4f}")
-        model.train()
+        # Once in a while, Run evaluation
+        if (step > 0 and step % eval_interval == 0) or last_step:
+            val_loss = model_evaluator.evaluate()
+            if ddp_rank == 0 and val_loss is not None:
+                with open(log_file, "a") as f: # open for writing to clear the file - train loss, val loss
+                    f.write(f"{step} val {val_loss.item():.4f}\n")
 
-if ddp:
-    destroy_process_group()
+        # save evaluation and checkpoint every 10000 steps
+        if step % 10000 == 0 and step >= 0 and ddp_rank == 0: # 
+            # Use a default val_loss if not available
+            checkpoint_val_loss = val_loss if 'val_loss' in locals() and val_loss is not None else torch.tensor(0.0)
+            CheckpointConfig.save_checkpoint(raw_model, optimizer, BertConfig, step, checkpoint_val_loss, CheckpointConfig.checkpoint_dir, random_seeds=random_seeds)
+            logger.info(f"Checkpoint saved at step {step}")
+
+    DDPConfig.destroy_distributed()

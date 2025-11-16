@@ -54,10 +54,7 @@ RUN apt-get update --allow-insecure-repositories && \
     rsync \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Hugging Face cache directory
-ENV HF_HOME=/app/.cache/huggingface
-ENV TRANSFORMERS_CACHE=/app/.cache/huggingface/transformers
-ENV HF_DATASETS_CACHE=/app/.cache/huggingface/datasets
+# Set Google Application Credentials environment variable
 ENV GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-key.json
 
 # Set working directory
