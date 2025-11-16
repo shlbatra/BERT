@@ -58,7 +58,7 @@ class Evaluator:
             self.logger_instance.info(f"validation loss: {val_loss_accum.item():.4f}")
             return val_loss_accum
 
-    def evaluate_ag_news_embeddings(self, step, max_samples=1000):
+    def evaluate_ag_news_embeddings(self, step, max_samples=10000):
         """
         Evaluate BERT embeddings on AG News classification task
         Extract [CLS] embeddings and train logistic regression classifier
