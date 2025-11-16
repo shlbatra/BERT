@@ -77,7 +77,7 @@ run_remote '
 nvidia-smi
 cd my-gpu-project/
 sudo docker system prune -af
-sudo docker pull shlbatra123/gpu_docker_image:latest
+sudo docker pull shlbatra123/gpu_docker_bert:latest
 '
 
 echo "Step 5: Setting up directories and running training..."
@@ -89,7 +89,7 @@ sudo docker run --runtime=nvidia \
   -v $(pwd)/gcp-key.json:/app/gcp-key.json \
   -v $(pwd)/checkpoints:/app/checkpoints \
   -v $(pwd)/logs:/app/logs \
-  --rm shlbatra123/gpu_docker_image:latest \
+  --rm shlbatra123/gpu_docker_bert:latest \
   bash -c "torchrun --nproc_per_node='"$NUM_GPUS"' train_bert.py"
 '
 
