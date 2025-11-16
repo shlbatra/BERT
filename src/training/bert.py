@@ -213,6 +213,8 @@ class Bert(nn.Module):
         mlm_logits = self.mlm_decoder(mlm_hidden) + self.mlm_bias  # Technical: vocab prediction + bias; Conceptual: final token probabilities
         
         return {
+            'last_hidden_state': hidden_states,  # Technical: final encoder output; Conceptual: contextualized token representations
+            'pooler_output': pooled_output,       # Technical: pooled [CLS] representation; Conceptual: sequence-level features
             'nsp_logits': nsp_logits,            # Technical: NSP classification scores; Conceptual: sentence relationship prediction
             'mlm_logits': mlm_logits             # Technical: MLM prediction scores; Conceptual: masked token predictions
         }

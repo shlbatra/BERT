@@ -3,10 +3,9 @@
 Test script to verify BERT pipeline components work correctly
 """
 
-import numpy as np
 import torch
 import sys
-import os
+import torch.nn.functional as F
 
 # Add src to path
 sys.path.append('src')

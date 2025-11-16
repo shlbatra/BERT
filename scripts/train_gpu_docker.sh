@@ -44,35 +44,16 @@ wait_for_reboot() {
 echo "Step 1: Setting up remote environment..."
 run_remote '
 sudo apt update
-mkdir -p my-gpu-project && cd my-gpu-project
-sudo snap install docker 
-sudo apt install nvidia-utils-570-server -y
-sudo apt install nvidia-driver-570-server -y
-
-# Download and setup NVIDIA Container Toolkit
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/deb/amd64 /" | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-sudo apt update
-sudo apt install nvidia-container-toolkit -y
-sudo nvidia-ctk runtime configure --runtime=docker
 '
 
-echo "Step 2: Restarting machine..."
-run_remote 'sudo reboot' || true  # Allow this to "fail" since connection drops
-
-# Wait for machine to come back online
-wait_for_reboot
-
-echo "Step 3: Copying GCP credentials..."
+echo "Step 2: Copying GCP credentials..."
 if [ -f "gcp-key.json" ]; then
     copy_to_remote "gcp-key.json" "~/my-gpu-project/"
 else
     echo "Warning: gcp-key.json not found in current directory"
 fi
 
-
-
-echo "Step 4: Testing GPU and pulling Docker image..."
+echo "Step 3: Testing GPU and pulling Docker image..."
 run_remote '
 nvidia-smi
 cd my-gpu-project/
@@ -80,7 +61,7 @@ sudo docker system prune -af
 sudo docker pull shlbatra123/gpu_docker_image:latest
 '
 
-echo "Step 5: Setting up directories and running training..."
+echo "Step 4: Setting up directories and running training..."
 run_remote '
 cd my-gpu-project/
 mkdir -p checkpoints logs

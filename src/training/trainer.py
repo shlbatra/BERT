@@ -4,6 +4,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import time
 import logging
 from training.bert_inputs import create_mlm_inputs_and_labels
+import torch.nn.functional as F
 
 class Trainer:
     def __init__(self, model, optimizer, train_loader, config, ddp_config, logger, vocab_size):

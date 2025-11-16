@@ -124,10 +124,16 @@ if __name__ == "__main__":
         
         # Once in a while, Run evaluation
         if (step > 0 and step % eval_interval == 0) or last_step:
-            val_loss = model_evaluator.evaluate()
+            val_loss = model_evaluator.evaluate(val_loader, step, last_step)
             if ddp_rank == 0 and val_loss is not None:
                 with open(log_file, "a") as f: # open for writing to clear the file - train loss, val loss
                     f.write(f"{step} val {val_loss.item():.4f}\n")
+            
+            # Run AG News embedding evaluation every 2000 steps
+            if step % 2000 == 0 and step > 0:
+                ag_news_acc = model_evaluator.evaluate_ag_news_embeddings(step)
+                if ddp_rank == 0 and ag_news_acc is not None:
+                    logger.info(f"AG News Test Accuracy at step {step}: {ag_news_acc:.4f}")
 
         # save evaluation and checkpoint every 10000 steps
         if step % 10000 == 0 and step >= 0 and ddp_rank == 0: # 
