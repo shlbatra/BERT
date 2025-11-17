@@ -111,7 +111,7 @@ if __name__ == "__main__":
     model_evaluator = Evaluator(raw_model, optimizer, TrainingConfig, distributed_config, log_file, VOCAB_SIZE)
 
     # Training loop
-    max_steps = 100000
+    max_steps = 2000 # 100000
     eval_interval = 500
     log_interval = 10
 
@@ -130,13 +130,13 @@ if __name__ == "__main__":
                     f.write(f"{step} val {val_loss.item():.4f}\n")
             
             # Run AG News embedding evaluation every 2000 steps
-            if step % 2000 == 0 and step > 0:
+            if step % 200 == 0 and step > 0:
                 ag_news_acc = model_evaluator.evaluate_ag_news_embeddings(step)
                 if ddp_rank == 0 and ag_news_acc is not None:
                     logger.info(f"AG News Test Accuracy at step {step}: {ag_news_acc:.4f}")
 
         # save evaluation and checkpoint every 10000 steps
-        if step % 10000 == 0 and step >= 0 and ddp_rank == 0: # 
+        if step % 500 == 0 and step >= 0 and ddp_rank == 0:
             # Use a default val_loss if not available
             checkpoint_val_loss = val_loss if 'val_loss' in locals() and val_loss is not None else torch.tensor(0.0)
             CheckpointConfig.save_checkpoint(raw_model, optimizer, BertConfig, step, checkpoint_val_loss, CheckpointConfig.checkpoint_dir, random_seeds=random_seeds)

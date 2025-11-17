@@ -8,9 +8,9 @@ from dataclasses import dataclass
 @dataclass
 class BertConfig:
     vocab_size: int = 50261  # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token + 1 PAD token + 1 CLS token + 1 SEP token + 1 MASK token
-    hidden_size: int = 768 # embedding dimension (model capacity)
-    num_hidden_layers: int = 12 # number of layers
-    num_attention_heads: int = 12 # number of heads
+    hidden_size: int = 384 # embedding dimension (model capacity) ex. 768
+    num_hidden_layers: int = 6 # number of layers ex. 12
+    num_attention_heads: int = 6 # number of heads ex. 12
     max_position_embeddings: int = 512 # max sequence length
 
 class BertEmbeddings(nn.Module):

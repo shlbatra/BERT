@@ -67,7 +67,9 @@ echo "Step 3: Copying GCP credentials..."
 if [ -f "gcp-key.json" ]; then
     copy_to_remote "gcp-key.json" "~/my-gpu-project/"
 else
-    echo "Warning: gcp-key.json not found in current directory"
+    echo "Error: gcp-key.json not found in current directory"
+    echo "Please ensure gcp-key.json exists in the same directory as this script"
+    exit 1
 fi
 
 

@@ -48,9 +48,12 @@ sudo apt update
 
 echo "Step 2: Copying GCP credentials..."
 if [ -f "gcp-key.json" ]; then
+    run_remote "mkdir -p ~/my-gpu-project"
     copy_to_remote "gcp-key.json" "~/my-gpu-project/"
 else
-    echo "Warning: gcp-key.json not found in current directory"
+    echo "Error: gcp-key.json not found in current directory"
+    echo "Please ensure gcp-key.json exists in the same directory as this script"
+    exit 1
 fi
 
 echo "Step 3: Testing GPU and pulling Docker image..."
