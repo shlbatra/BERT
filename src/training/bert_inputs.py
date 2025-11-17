@@ -47,13 +47,5 @@ def create_mlm_inputs_and_labels(input_ids, mask_token_id=50258, pad_token_id=50
     random_words = torch.randint(50260, input_ids.shape, dtype=torch.long, device=input_ids.device)
     masked_input_ids[indices_random] = random_words[indices_random]
     attention_mask = (masked_input_ids != pad_token_id)
-    
+
     return masked_input_ids, mlm_labels, attention_mask
-
-
-# def get_attn_pad_mask(seq_q, seq_k):
-#     batch_size, len_q = seq_q.size()
-#     batch_size, len_k = seq_k.size()
-#     # eq(zero) is PAD token
-#     pad_attn_mask = seq_k.data.eq(0).unsqueeze(1)  # batch_size x 1 x len_k(=len_q), one is masking
-#     return pad_attn_mask.expand(batch_size, len_q, len_k)  # batch_size x len_q x len_k
