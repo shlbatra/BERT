@@ -134,6 +134,8 @@ if __name__ == "__main__":
                 ag_news_acc = model_evaluator.evaluate_ag_news_embeddings(step)
                 if ddp_rank == 0 and ag_news_acc is not None:
                     logger.info(f"AG News Test Accuracy at step {step}: {ag_news_acc:.4f}")
+                    with open(log_file, "a") as f: # open for writing to clear the file - train loss, val loss
+                        f.write(f"{step} accuracy {ag_news_acc:.4f}\n")
 
         # save evaluation and checkpoint every 10000 steps
         if step % 500 == 0 and step >= 0 and ddp_rank == 0:
